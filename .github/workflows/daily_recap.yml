@@ -1,0 +1,51 @@
+# Daily Post-Game Stat Lines -- runs once a morning.
+# 12:00 UTC = 8am ET / 7am CT during the MiLB season (EDT, UTC-4), which
+# gives the league plenty of time to finalize the previous night's box
+# score. Adjust if your local game times run especially late.
+
+name: Daily Post-Game Recap
+
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Optional YYYY-MM-DD to backfill instead of yesterday"
+        required: false
+
+jobs:
+  daily-recap:
+    runs-on: ubuntu-latest
+    concurrency: cyclones-bot-state
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run daily recap
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          MLB_TEAM_ID: "509"
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python daily_recap.py --date "${{ github.event.inputs.date }}"
+          else
+            python daily_recap.py
+          fi
+
+      - name: Commit updated state.json
+        run: |
+          git config user.name "cyclones-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || git commit -m "chore: update daily-recap state [skip ci]"
+          git push
