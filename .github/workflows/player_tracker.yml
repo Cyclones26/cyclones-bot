@@ -1,0 +1,48 @@
+# Player Tracker -- runs once a week (Thursdays, offset from
+# weekly_summary.yml's Mondays so the two don't fight over state files or
+# X rate limits). Tracks individual players (seeded from the 2026
+# Cyclones roster) indefinitely, even after they leave the organization --
+# see player_tracker.py for the full milestone + progress-update logic.
+#
+# SETUP: same one-time steps as the other workflows -- see
+# roster_alerts.yml's header comment. This job commits tracked_players.json
+# back to the repo instead of state.json.
+
+name: Player Tracker
+
+on:
+  schedule:
+    - cron: "0 14 * * 4"   # Thursdays at 14:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  player-tracker:
+    runs-on: ubuntu-latest
+    concurrency: cyclones-bot-tracker-state
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run player tracker
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          MLB_TEAM_ID: "509"
+          MLB_SEASON: "2026"
+        run: python player_tracker.py
+
+      - name: Commit updated tracked_players.json
+        run: |
+          git config user.name "cyclones-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add tracked_players.json
+          git diff --cached --quiet || git commit -m "chore: update player-tracker state [skip ci]"
+          git push
