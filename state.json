@@ -2,4 +2,5 @@
   "seen_transaction_ids": [],
   "tweeted_game_pks": [],
   "last_weekly_summary_end_date": null,
- 
+  "last_run_at": null
+}
