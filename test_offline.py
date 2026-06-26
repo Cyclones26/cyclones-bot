@@ -16,6 +16,7 @@ os.environ.setdefault("DRY_RUN", "true")
 import transactions as tx_mod
 import tweet_formatter
 import boxscore
+import player_milestones as pm_mod
 
 TEAM_ID = 509
 
@@ -140,5 +141,87 @@ hot_pitchers = [
 weekly_tweet = tweet_formatter.format_weekly_summary_tweet("2026-06-18", "2026-06-24", hot_hitters, hot_pitchers)
 print(weekly_tweet)
 assert len(weekly_tweet) <= 280
+
+print("=== Player Tracker: milestone classification + tweet formatting ===")
+
+# First-ever check on a player -- nothing to diff against yet, must be silent.
+brand_new = {"name": "Mitch Voit", "_initialized": False, "addedDate": "2026-06-26"}
+assert pm_mod.classify_player_change(brand_new, brand_new) is None
+
+base_snapshot = {
+    "name": "Mitch Voit",
+    "currentTeamId": 509,
+    "currentTeamName": "Brooklyn Cyclones",
+    "sportId": 13,
+    "levelRank": 2,
+    "parentOrgName": "New York Mets",
+    "primaryPosition": "1B",
+    "mlbDebutSeen": False,
+    "lastStatus": "ACTIVE",
+    "_initialized": True,
+}
+
+# No change at all -> no milestone.
+assert pm_mod.classify_player_change(base_snapshot, dict(base_snapshot)) is None
+
+# Promotion within the same org (Brooklyn -> Binghamton).
+promoted = dict(base_snapshot, currentTeamId=1324, currentTeamName="Binghamton Rumble Ponies",
+                 sportId=12, levelRank=3)
+milestone = pm_mod.classify_player_change(base_snapshot, promoted)
+assert milestone["category"] == pm_mod.MILESTONE_PROMOTED, milestone
+print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+print()
+
+# Traded to a different organization at the same level.
+traded = dict(base_snapshot, currentTeamId=9999, currentTeamName="Some Other Team",
+              parentOrgName="Some Other Org")
+milestone = pm_mod.classify_player_change(base_snapshot, traded)
+assert milestone["category"] == pm_mod.MILESTONE_TRADED_ORG, milestone
+print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+print()
+
+# MLB debut takes priority even if the team also changed.
+debuted = dict(base_snapshot, currentTeamId=121, currentTeamName="New York Mets",
+               sportId=1, levelRank=5, mlbDebutSeen=True)
+milestone = pm_mod.classify_player_change(base_snapshot, debuted)
+assert milestone["category"] == pm_mod.MILESTONE_MLB_DEBUT, milestone
+debut_tweet = tweet_formatter.format_player_debut_tweet("Mitch Voit", milestone.get("team_name"))
+print(debut_tweet)
+print()
+assert len(debut_tweet) <= 280
+
+# Released / left affiliated ball entirely.
+left_ball = dict(base_snapshot, currentTeamId=None, currentTeamName=None)
+milestone = pm_mod.classify_player_change(base_snapshot, left_ball)
+assert milestone["category"] == pm_mod.MILESTONE_LEFT_AFFILIATED_BALL, milestone
+print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+print()
+
+# Best-effort IL placement, then activation, on the same team.
+on_il = dict(base_snapshot, lastStatus="IL")
+milestone = pm_mod.classify_player_change(base_snapshot, on_il)
+assert milestone["category"] == pm_mod.MILESTONE_PLACED_ON_IL, milestone
+print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+
+activated = dict(on_il, lastStatus="ACTIVE")
+milestone = pm_mod.classify_player_change(on_il, activated)
+assert milestone["category"] == pm_mod.MILESTONE_ACTIVATED_FROM_IL, milestone
+print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+print()
+
+# Periodic "graduate" progress tweet, for both a hitter and a pitcher.
+hitter_stat = {"avg": 0.305, "hits": 9, "atBats": 28, "homeRuns": 2, "rbi": 7}
+progress_tweet = tweet_formatter.format_player_progress_tweet(
+    "Mitch Voit", "Binghamton Rumble Ponies", "AA", False, hitter_stat
+)
+print(progress_tweet)
+assert len(progress_tweet) <= 280
+
+pitcher_stat = {"inningsPitched": "6.2", "strikeOuts": 8, "era": 2.10}
+progress_tweet = tweet_formatter.format_player_progress_tweet(
+    "Ace Pitcher", "Syracuse Mets", "AAA", True, pitcher_stat
+)
+print(progress_tweet)
+assert len(progress_tweet) <= 280
 
 print("\nALL OFFLINE CHECKS PASSED")
