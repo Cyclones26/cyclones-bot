@@ -48,4 +48,14 @@ def save_state(state: Dict[str, Any]) -> None:
         if key in state and isinstance(state[key], list) and len(state[key]) > MAX_HISTORY_ITEMS:
             state[key] = state[key][-MAX_HISTORY_ITEMS:]
 
-    # Alw
+    # Always stamp the run time, even when nothing else changed. This
+    # guarantees state.json has a diff every single run, so the GitHub
+    # Actions "commit state back" step always has something to push.
+    # That matters because GitHub auto-disables a repo's *scheduled*
+    # workflows after 60 days with zero pushes -- without this stamp, a
+    # quiet offseason stretch (no transactions, no games) could silently
+    # kill your cron until you noticed and manually re-enabled it.
+    state["last_run_at"] = dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+    with open(config.STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2, sort_keys=True)
