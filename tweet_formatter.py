@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import config
+import player_milestones as pm_mod
 import transactions as tx_mod
 
 TWEET_MAX_CHARS = 280
@@ -150,5 +151,111 @@ def format_weekly_summary_tweet(
         )
 
     lines.append("")
+    lines.append(config.TEAM_HASHTAGS)
+    return _truncate("\n".join(lines))
+
+
+# --------------------------------------------------------------------------
+# 4. Player Tracker: long-term milestones + periodic progress updates
+# --------------------------------------------------------------------------
+
+_PLAYER_MILESTONE_TEMPLATES = {
+    pm_mod.MILESTONE_PROMOTED: (
+        "\U0001F4C8 LEVEL UP \U0001F4C8\n\n"
+        "{player} has been promoted from the {old_team} to the {new_team}! "
+        "The development continues. \U0001F31F\n\n{hashtags}"
+    ),
+    pm_mod.MILESTONE_DEMOTED: (
+        "\U0001F504 ROSTER MOVE\n\n"
+        "{player} has been reassigned from the {old_team} to the {new_team}.\n\n{hashtags}"
+    ),
+    pm_mod.MILESTONE_TRADED_ORG: (
+        "\U0001F501 TRADED\n\n"
+        "{player} is now in the {new_org} organization, assigned to the "
+        "{new_team}. We'll keep tracking his progress! \U0001F440\n\n{hashtags}"
+    ),
+    pm_mod.MILESTONE_LATERAL_MOVE: (
+        "\U0001F4CB ROSTER MOVE\n\n{player} has been moved to the {new_team}.\n\n{hashtags}"
+    ),
+    pm_mod.MILESTONE_LEFT_AFFILIATED_BALL: (
+        "\U0001F4C4 STATUS UPDATE\n\n"
+        "{player} is no longer with an affiliated MLB/MiLB club. Thanks for "
+        "the memories in the system. \U0001F499\n\n{hashtags}"
+    ),
+    pm_mod.MILESTONE_PLACED_ON_IL: (
+        "\U0001FA79 IL UPDATE\n\n"
+        "{player} ({new_team_for_il}) has been placed on the Injured List. "
+        "Get well soon! \U0001F4AA\n\n{hashtags}"
+    ),
+    pm_mod.MILESTONE_ACTIVATED_FROM_IL: (
+        "✅ BACK IN ACTION\n\n"
+        "{player} has been activated off the Injured List for the "
+        "{new_team_for_il}!\n\n{hashtags}"
+    ),
+}
+
+
+def format_player_milestone_tweet(player_name: str, milestone: Dict[str, Any]) -> str:
+    """`milestone` is the dict returned by player_milestones.classify_player_change()."""
+    category = milestone.get("category")
+    template = _PLAYER_MILESTONE_TEMPLATES.get(category)
+    if template is None:
+        text = f"\U0001F4CB PLAYER WATCH\n\n{player_name}: status update.\n\n{config.TEAM_HASHTAGS}"
+        return _truncate(text)
+
+    text = template.format(
+        player=player_name,
+        old_team=milestone.get("old_team_name") or "their previous club",
+        new_team=milestone.get("new_team_name") or "their new club",
+        new_org=milestone.get("new_org") or "a new organization",
+        new_team_for_il=milestone.get("team_name") or "their club",
+        hashtags=config.TEAM_HASHTAGS,
+    )
+    return _truncate(text)
+
+
+def format_player_debut_tweet(player_name: str, team_name: Optional[str]) -> str:
+    """A dedicated, extra-celebratory template for the rarest milestone of all."""
+    where = f" with the {team_name}" if team_name else ""
+    text = (
+        "\U0001F386\U0001F386 MLB DEBUT \U0001F386\U0001F386\n\n"
+        f"{player_name} has made his Major League debut{where}! "
+        "From Brooklyn to The Show — a moment to remember. \U0001F30C\n\n"
+        f"{config.TEAM_HASHTAGS}"
+    )
+    return _truncate(text)
+
+
+def format_player_progress_tweet(
+    player_name: str,
+    team_name: str,
+    level_name: str,
+    is_pitcher: bool,
+    stat: Dict[str, Any],
+) -> str:
+    """
+    Periodic "how's he doing now" update for a tracked player who has
+    moved on from the Cyclones (the weekly_summary.py hot-streaks tweet
+    already covers the current roster, so this is specifically for
+    graduates -- see player_tracker.py).
+    """
+    lines = [f"\U0001F4CA PLAYER WATCH: {player_name}", f"{team_name} ({level_name})", ""]
+
+    if is_pitcher:
+        era = stat.get("era", 0) or 0
+        lines.append(
+            f"Last 7 days: {stat.get('inningsPitched', '0.0')} IP, "
+            f"{stat.get('strikeOuts', 0)} K, {float(era):.2f} ERA"
+        )
+    else:
+        avg = stat.get("avg", 0) or 0
+        lines.append(
+            f"Last 7 days: .{int(round(float(avg) * 1000)):03d} "
+            f"({stat.get('hits', 0)}-for-{stat.get('atBats', 0)}), "
+            f"{stat.get('homeRuns', 0)} HR, {stat.get('rbi', 0)} RBI"
+        )
+
+    lines.append("")
+    lines.append(f"Drafted/developed by the {config.TEAM_NAME} \U0001F309")
     lines.append(config.TEAM_HASHTAGS)
     return _truncate("\n".join(lines))
