@@ -53,6 +53,14 @@ def run() -> int:
 
     logger.info("Fetching transactions for team %s from %s to %s...", config.TEAM_ID, start_date, end_date)
     txs = mlb_api.get_transactions(config.TEAM_ID, start_date, end_date)
+    # Filter to only transactions directly involving the Cyclones (teamId must be
+    # fromTeam or toTeam — the API sometimes returns tangential records where 509
+    # appears in metadata but the move itself has nothing to do with Brooklyn).
+    txs = [
+        t for t in txs
+        if (t.get("fromTeam") or {}).get("id") == config.TEAM_ID
+        or (t.get("toTeam") or {}).get("id") == config.TEAM_ID
+    ]
     logger.info("Found %d transaction(s) in window.", len(txs))
 
     new_count = 0
