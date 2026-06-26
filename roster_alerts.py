@@ -31,6 +31,7 @@ import state_store
 import transactions as tx_mod
 import tweet_formatter
 import twitter_client
+import sheet_logger
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("roster_alerts")
@@ -54,7 +55,7 @@ def run() -> int:
     logger.info("Fetching transactions for team %s from %s to %s...", config.TEAM_ID, start_date, end_date)
     txs = mlb_api.get_transactions(config.TEAM_ID, start_date, end_date)
     # Filter to only transactions directly involving the Cyclones (teamId must be
-    # fromTeam or toTeam — the API sometimes returns tangential records where 509
+    # fromTeam or toTeam â the API sometimes returns tangential records where 509
     # appears in metadata but the move itself has nothing to do with Brooklyn).
     txs = [
         t for t in txs
@@ -75,6 +76,12 @@ def run() -> int:
         logger.info("New transaction #%s [%s]: %s", tx_id, classified["category"], classified["player"])
         try:
             twitter_client.post_tweet(tweet_text)
+            sheet_logger.log_tweet(
+                script="roster_alerts",
+                category=classified["category"],
+                subject=classified["player"],
+                tweet_text=tweet_text,
+            )
         except twitter_client.TweetPostError as exc:
             logger.error("Failed to post transaction #%s: %s", tx_id, exc)
             continue  # leave it unseen so the next run retries
