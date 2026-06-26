@@ -1,11 +1,17 @@
 # Brooklyn Cyclones X Bot
 
 Automated X (Twitter) bot for the Brooklyn Cyclones (High-A, New York Mets,
-MLB Stats API team ID `509`), covering three update types:
+MLB Stats API team ID `509`), covering four update types:
 
 1. **Roster Transaction Alerts** — promotions, demotions, IL moves.
 2. **Daily Post-Game Stat Lines** — top hitter/pitcher from the box score.
 3. **Weekly Performance Summaries** — hot streaks over the last 7 days.
+4. **Player Tracker** — long-term, individual development tracking. Seeds
+   itself from the 2026 Cyclones roster and then follows each of those
+   players *indefinitely*: promotions, demotions, trades, MLB debuts, even
+   a best-effort attempt to keep following someone after they leave the
+   Mets organization entirely — plus a weekly "how's he doing now" stat
+   line once a player has graduated off the Brooklyn roster. See §1.5.
 
 All MLB data comes from the public, unofficial MLB Stats API
 (`statsapi.mlb.com`) — no key required. Posting goes through the official
@@ -28,6 +34,8 @@ limit — be a reasonable citizen of it anyway).
 | **Box score** | `GET /game/{gamePk}/boxscore` | The core feed for daily stat lines — full batting/pitching lines for every player. |
 | Player stats by date range | `GET /people/{personId}/stats?stats=byDateRange&group=hitting&startDate=&endDate=&season=&sportId=` | The core feed for weekly hot streaks. `group=pitching` for pitchers. |
 | Player game log (fallback) | `GET /people/{personId}/stats?stats=gameLog&group=hitting&season=&sportId=` | Use if `byDateRange` ever breaks — sum games whose date falls in your window. Already wired up as `mlb_api.get_player_gamelog()`. |
+| **Org-agnostic player lookup** | `GET /people/{personId}?hydrate=currentTeam,team` | The core feed for the Player Tracker. Returns whichever team currently employs this person — any organization, any level — plus `mlbDebutDate` once it exists. This is what lets the tracker keep following a player after he's traded or released, without needing to guess which org's roster to check. |
+| Full-season roster (tracker seed) | `GET /teams/509/roster?rosterType=fullSeason` | Includes active + IL + restricted, so anyone who suits up for Brooklyn in 2026 gets added to the watchlist — not just whoever happens to be active the moment the seed runs. |
 
 **Heads up:** this API is *unofficial* — it's not in MLB's published developer
 portal, it powers MLB.com/the MLB app, and field names occasionally shift.
@@ -40,25 +48,85 @@ shuffles happen.
 
 ---
 
+## 1.5 How the Player Tracker works (Update #4)
+
+This is the "track Mitch Voit forever" feature. It's intentionally a
+separate script with its own state file, because it operates on a
+different axis than the other three: they're all scoped to "what
+happened on the 509 roster," while this one follows specific people
+regardless of which roster they end up on.
+
+**Seeding.** Every run, it pulls `rosterType=fullSeason` for team 509 and
+adds any player not already on the watchlist (`tracked_players.json`).
+This is a one-way ratchet — once added, a player is never removed, even
+after he's promoted, traded, released, or retired. You don't maintain a
+manual list; the 2026 roster *is* the list.
+
+**Milestone detection.** Each run, every watchlisted player gets looked up
+via the org-agnostic `/people/{id}?hydrate=currentTeam` endpoint, and the
+result is diffed against the snapshot saved last run
+(`player_milestones.classify_player_change()`). A real change posts one
+of:
+- **Promoted / demoted** — level changed within the same organization.
+- **Traded** — the player's organization (`parentOrgName`) changed.
+- **MLB debut** — `mlbDebutDate` newly present; gets its own
+  extra-celebratory template and takes priority over everything else that
+  run.
+- **Left affiliated ball** — `currentTeam` disappeared entirely
+  (released, retired, or signed overseas/independent — the API can't
+  tell these apart, so the tweet stays neutral).
+- **Placed on / activated from the IL** — best-effort only. The
+  `/people` endpoint doesn't carry roster status, so this checks the
+  player's *current team's* `rosterType=fullRoster` for a status code
+  that looks IL-related. Good enough to catch most cases, not
+  guaranteed to catch all of them.
+
+If posting a milestone tweet fails (rate limit, transient API error),
+that player's snapshot is deliberately **not** updated, so the same diff
+gets retried next run instead of silently being lost.
+
+**Weekly progress updates.** Once a week (gated by date, like
+`weekly_summary.py`, so a manual re-run mid-week doesn't double-post),
+every tracked player who has left the Cyclones roster — but is still
+playing somewhere — gets checked against the same usage thresholds as
+the weekly hot-streaks tweet (`WEEKLY_MIN_AT_BATS` / `WEEKLY_MIN_OUTS_PITCHED`)
+over the trailing 7 days, and a short stat-line tweet goes out if he
+qualifies. Current Cyclones are skipped here on purpose —
+`weekly_summary.py` already covers them, and skipping avoids posting the
+same player's stats twice.
+
+**The honest limitation:** "best-effort outside the org" means exactly
+that. The MLB Stats API only knows about affiliated MLB/MiLB baseball.
+If a tracked player signs in Japan/Korea, goes independent, or simply
+retires, `currentTeam` just stops resolving — the tracker correctly flags
+that as "left affiliated ball" but can't follow him any further, because
+there's no API call that would tell it where to look next.
+
+---
+
 ## 2. Project layout
 
 ```
 cyclones_bot/
-├── config.py            # all settings, pulled from env vars
-├── mlb_api.py            # MLB Stats API HTTP wrapper
-├── transactions.py       # classifies promotion/demotion/IL from raw tx data
-├── boxscore.py            # finds top hitter/pitcher in a box score
-├── tweet_formatter.py     # turns structured data into tweet text + emojis
-├── twitter_client.py      # tweepy wrapper, with DRY_RUN support
-├── state_store.py         # JSON file tracking what's already been tweeted
-├── roster_alerts.py       # Update #1 entry point
-├── daily_recap.py         # Update #2 entry point
-├── weekly_summary.py      # Update #3 entry point
-├── test_offline.py        # offline fixture-based sanity check (no network)
+├── config.py                # all settings, pulled from env vars
+├── mlb_api.py                # MLB Stats API HTTP wrapper
+├── transactions.py           # classifies promotion/demotion/IL from raw tx data
+├── player_milestones.py      # classifies a tracked player's snapshot-to-snapshot diff
+├── boxscore.py                # finds top hitter/pitcher in a box score
+├── tweet_formatter.py         # turns structured data into tweet text + emojis
+├── twitter_client.py          # tweepy wrapper, with DRY_RUN support
+├── state_store.py             # JSON file tracking what's already been tweeted (Updates 1-3)
+├── player_tracker_state.py    # JSON file tracking watchlisted players (Update 4)
+├── roster_alerts.py           # Update #1 entry point
+├── daily_recap.py             # Update #2 entry point
+├── weekly_summary.py          # Update #3 entry point
+├── player_tracker.py          # Update #4 entry point
+├── test_offline.py            # offline fixture-based sanity check (no network)
 ├── requirements.txt
 ├── .env.example
-├── state.json             # committed starting state (all empty)
-└── .github/workflows/      # GitHub Actions schedules for all three scripts
+├── state.json                 # committed starting state (all empty)
+├── tracked_players.json       # committed starting watchlist (empty until first seed run)
+└── .github/workflows/          # GitHub Actions schedules for all four scripts
 ```
 
 ---
@@ -88,6 +156,7 @@ DRY_RUN=true python test_offline.py     # no network, validates the logic
 DRY_RUN=true python roster_alerts.py    # hits the real MLB API, prints tweets
 DRY_RUN=true python daily_recap.py --date 2026-06-20   # backfill a known game day
 DRY_RUN=true python weekly_summary.py
+DRY_RUN=true python player_tracker.py   # first run just seeds the watchlist, no tweets
 ```
 
 Once those look right, set `DRY_RUN=false` (or remove it) and run for real.
@@ -102,28 +171,34 @@ Workflows are already in `.github/workflows/`:
 - `roster_alerts.yml` — every 3 hours
 - `daily_recap.yml` — daily at 12:00 UTC
 - `weekly_summary.yml` — Mondays at 13:00 UTC
+- `player_tracker.yml` — Thursdays at 14:00 UTC (offset from the others so
+  it doesn't race them over commits or the X rate limit)
 
 Setup:
 1. Push this repo to GitHub.
 2. **Settings → Secrets and variables → Actions** → add `X_API_KEY`,
    `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_SECRET`.
 3. **Settings → Actions → General → Workflow permissions** → "Read and
-   write permissions" (the workflows commit `state.json` back to the repo
-   after each run so the bot never double-posts — GitHub Actions runners
-   are thrown away after every job, so state has to live in the repo
-   itself, not on disk).
+   write permissions" (the workflows commit `state.json` (Updates 1-3) or
+   `tracked_players.json` (Update 4) back to the repo after each run so
+   the bot never double-posts — GitHub Actions runners are thrown away
+   after every job, so state has to live in the repo itself, not on disk).
 4. Use the "Run workflow" button (`workflow_dispatch`) to trigger a manual
-   test run before trusting the cron.
+   test run before trusting the cron. For `player_tracker.yml` specifically,
+   that first manual run just seeds the watchlist from the current
+   roster — it won't tweet anything until a *second* run sees a real
+   change, so don't be alarmed when run #1 is silent on X.
 
 ### PythonAnywhere (alternative — simplest if you don't want GitHub Actions)
 
 1. Upload the project folder (Files tab) or `git clone` it from a Bash console.
 2. `pip install -r requirements.txt --user` in a Bash console.
-3. **Tasks** tab → add three scheduled tasks (free accounts get one task,
+3. **Tasks** tab → add four scheduled tasks (free accounts get one task,
    paid "Hacker" tier gets more — see PythonAnywhere's current pricing):
    - `python3.11 /home/you/cyclones_bot/roster_alerts.py`
    - `python3.11 /home/you/cyclones_bot/daily_recap.py`
    - `python3.11 /home/you/cyclones_bot/weekly_summary.py`
+   - `python3.11 /home/you/cyclones_bot/player_tracker.py`
 4. Set the times in PythonAnywhere's scheduler (it's UTC).
 5. Set env vars either in a `.env` file in the project folder
    (`python-dotenv` picks it up automatically) or by exporting them at the
@@ -236,6 +311,12 @@ win of going no-code.
 - Spot-check `mlb_api.get_team(509)` and `mlb_api.get_affiliate_ladder(121)`
   once per season (affiliations and team IDs can change) to make sure the
   level-ranking logic in `transactions.py` still resolves correctly.
+- For the Player Tracker specifically: run `player_tracker.py` twice in a
+  row with `DRY_RUN=true` shortly after your first real season roster is
+  set. The first run should only log "added new player to watchlist" with
+  no tweets; the second run should also be silent (nothing changed yet) —
+  that confirms seeding and diffing both work before you're relying on it
+  to catch a real promotion weeks later.
 
 ---
 
