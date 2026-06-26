@@ -1,0 +1,52 @@
+# Roster Transaction Alerts -- runs every 3 hours.
+# Promotions/demotions/IL moves tend to post during business hours, so this
+# cadence catches them quickly without hammering the (free, unofficial)
+# MLB Stats API. Adjust the cron to taste.
+#
+# SETUP (one-time):
+#   1. Push this whole project to a GitHub repo.
+#   2. Repo Settings -> Secrets and variables -> Actions -> New repository
+#      secret, add: X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_SECRET.
+#   3. Make sure state.json exists in the repo (even as an empty `{}`) so
+#      the very first commit-back step has something to diff against.
+#   4. Repo Settings -> Actions -> General -> Workflow permissions ->
+#      "Read and write permissions" (needed so the job can commit state.json).
+
+name: Roster Transaction Alerts
+
+on:
+  schedule:
+    - cron: "0 */3 * * *"   # every 3 hours, UTC
+  workflow_dispatch: {}       # lets you click "Run workflow" manually in the GitHub UI
+
+jobs:
+  roster-alerts:
+    runs-on: ubuntu-latest
+    concurrency: cyclones-bot-state   # avoid two runs racing to write state.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run roster alerts
+        env:
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          MLB_TEAM_ID: "509"
+          PARENT_MLB_TEAM_ID: "121"
+        run: python roster_alerts.py
+
+      - name: Commit updated state.json
+        run: |
+          git config user.name "cyclones-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json
+          git diff --cached --quiet || git commit -m "chore: update roster-alert state [skip ci]"
+          git push
