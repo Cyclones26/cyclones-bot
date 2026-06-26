@@ -48,6 +48,18 @@ SPORT_ID_LEVEL_RANK = {
     16: 0,   # Rookie / Complex League
 }
 
+# Human-readable labels for the same sportIds, for tweet text. This mapping
+# is standardized across every MLB organization (not Mets-specific), which
+# is what lets player_tracker.py follow a player to any other org's system.
+SPORT_ID_LEVEL_NAME = {
+    1: "MLB",
+    11: "AAA",
+    12: "AA",
+    13: "High-A",
+    14: "Single-A",
+    16: "Rookie/Complex",
+}
+
 TEAM_HASHTAGS = os.environ.get("TEAM_HASHTAGS", "#Cyclones #LGM #MiLB")
 
 # --------------------------------------------------------------------------
@@ -88,3 +100,18 @@ TRANSACTION_LOOKBACK_DAYS = int(os.environ.get("TRANSACTION_LOOKBACK_DAYS", "3")
 # weekly "hot streak" hitter/pitcher (avoids crowning a 1-for-1 pinch hitter).
 WEEKLY_MIN_AT_BATS = int(os.environ.get("WEEKLY_MIN_AT_BATS", "10"))
 WEEKLY_MIN_OUTS_PITCHED = int(os.environ.get("WEEKLY_MIN_OUTS_PITCHED", "6"))  # 2.0 IP
+
+# --------------------------------------------------------------------------
+# Player Tracker (Update #4: long-term, individual player development)
+# --------------------------------------------------------------------------
+# Separate state file from STATE_FILE above -- this one tracks individual
+# players (by MLB personId) indefinitely, across organizations, not just
+# Cyclones-roster transactions/games. See player_tracker.py.
+TRACKER_STATE_FILE = os.environ.get("TRACKER_STATE_FILE", "tracked_players.json")
+
+# Which roster snapshot seeds the watchlist. "fullSeason" includes the
+# active roster + IL/restricted/etc., so anyone who suits up for the 2026
+# Cyclones gets tracked -- not just whoever happens to be active the moment
+# this runs. Once added, a player is never removed from the watchlist, even
+# after they leave the organization entirely.
+TRACKER_SEED_ROSTER_TYPE = os.environ.get("TRACKER_SEED_ROSTER_TYPE", "fullSeason")
