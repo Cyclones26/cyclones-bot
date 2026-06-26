@@ -49,6 +49,17 @@ Endpoint reference (all relative to MLB_API_BASE = statsapi.mlb.com/api/v1):
 
   GET /people/{personId}/stats?stats=gameLog&group=hitting&season=&sportId=
       -> every individual game log entry for a player this season.
+
+  GET /people/{personId}?hydrate=currentTeam,team
+      -> player bio + whatever team currently employs them (currentTeam),
+         their primary position, and mlbDebutDate (present only once they've
+         debuted in the majors). Crucially, this is NOT scoped to one
+         organization -- it works the same whether the player is still in
+         the Mets system or has been traded/released/signed elsewhere. This
+         is the core feed for the long-term Player Tracker (see
+         player_tracker.py): diff currentTeam/level across runs to detect
+         promotions, demotions, trades, releases, and MLB debuts for any
+         player on the watchlist, indefinitely.
 """
 
 from __future__ import annotations
@@ -117,6 +128,28 @@ def get_affiliate_ladder(parent_mlb_team_id: int) -> Dict[int, Dict[str, Any]]:
 def get_roster(team_id: int, roster_type: str = "active") -> List[Dict[str, Any]]:
     data = _get(f"/teams/{team_id}/roster", params={"rosterType": roster_type})
     return data.get("roster", [])
+
+
+# --------------------------------------------------------------------------
+# Individual player lookups (Player Tracker)
+# --------------------------------------------------------------------------
+
+def get_person(person_id: int) -> Dict[str, Any]:
+    """
+    Org-agnostic player lookup. Returns whatever team currently employs this
+    person (any organization, any level) plus bio fields including
+    mlbDebutDate once it exists. Used by player_tracker.py to follow a
+    player's career indefinitely, even after they leave the Mets system.
+
+    If the player has no current team (released, retired, playing
+    independent/overseas ball outside MLB/MiLB's system), `currentTeam`
+    will simply be absent -- callers should treat that as "can't track
+    further" rather than an error, since that's the inherent limit of an
+    MLB-affiliated-ball-only API.
+    """
+    data = _get(f"/people/{person_id}", params={"hydrate": "currentTeam,team"})
+    people = data.get("people") or []
+    return people[0] if people else {}
 
 
 # --------------------------------------------------------------------------
