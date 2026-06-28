@@ -306,6 +306,8 @@ def run() -> int:
     tracker_state["players"] = players
     player_tracker_state.save_tracker_state(tracker_state)
 
+    sheet_logger.sync_tracked_players(players)
+
     logger.info(
         "Done. %d milestone tweet(s), %d progress tweet(s), watching %d player(s).",
         milestones_posted, progress_posted, len(players),
