@@ -34,7 +34,9 @@ jobs:
           X_API_SECRET: ${{ secrets.X_API_SECRET }}
           X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
           X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
-          MLB_TEAM_ID: "509"
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          MLB_TEAM_ID: "453"
         run: |
           if [ -n "${{ github.event.inputs.date }}" ]; then
             python daily_recap.py --date "${{ github.event.inputs.date }}"
