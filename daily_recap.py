@@ -32,6 +32,7 @@ import mlb_api
 import state_store
 import tweet_formatter
 import twitter_client
+import sheet_logger
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("daily_recap")
@@ -94,6 +95,12 @@ def process_date(date_str: str, state: dict) -> int:
 
         try:
             twitter_client.post_tweet(tweet_text)
+            sheet_logger.log_tweet(
+                script="daily_recap",
+                category="GAME RECAP",
+                subject=date_str,
+                tweet_text=tweet_text,
+            )
         except twitter_client.TweetPostError as exc:
             logger.error("Failed to post recap for game %s: %s", game_pk, exc)
             continue
