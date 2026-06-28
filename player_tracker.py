@@ -57,6 +57,7 @@ import player_milestones as pm_mod
 import player_tracker_state
 import tweet_formatter
 import twitter_client
+import sheet_logger
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("player_tracker")
@@ -209,6 +210,12 @@ def process_milestones(players: Dict[str, Any]) -> int:
 
         try:
             twitter_client.post_tweet(tweet_text)
+            sheet_logger.log_tweet(
+                script="player_tracker",
+                category="MILESTONE",
+                subject=player_name,
+                tweet_text=tweet_text,
+            )
         except twitter_client.TweetPostError as exc:
             logger.error("Failed to post milestone for %s: %s", player_name, exc)
             continue  # keep old_snapshot so next run retries the same diff
@@ -270,6 +277,12 @@ def process_progress_updates(players: Dict[str, Any], tracker_state: Dict[str, A
 
         try:
             twitter_client.post_tweet(tweet_text)
+            sheet_logger.log_tweet(
+                script="player_tracker",
+                category="PROGRESS UPDATE",
+                subject=snapshot.get("name", "Unknown"),
+                tweet_text=tweet_text,
+            )
         except twitter_client.TweetPostError as exc:
             logger.error("Failed to post progress update for %s: %s", snapshot.get("name"), exc)
             continue
