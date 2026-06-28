@@ -38,6 +38,7 @@ import mlb_api
 import state_store
 import tweet_formatter
 import twitter_client
+import sheet_logger
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("weekly_summary")
@@ -162,6 +163,12 @@ def run() -> int:
 
     try:
         twitter_client.post_tweet(tweet_text)
+        sheet_logger.log_tweet(
+            script="weekly_summary",
+            category="WEEKLY SUMMARY",
+            subject=f"{start_str} to {end_str}",
+            tweet_text=tweet_text,
+        )
     except twitter_client.TweetPostError as exc:
         logger.error("Failed to post weekly summary: %s", exc)
         return 1
