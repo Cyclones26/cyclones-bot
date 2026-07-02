@@ -1,5 +1,5 @@
 {
-  "last_run_at": "2026-07-02T16:18:03Z",
+  "last_run_at": "2026-07-02T18:17:43Z",
   "last_weekly_summary_end_date": "2026-06-28",
   "seen_transaction_ids": [
     923578,
@@ -13,8 +13,9 @@
     922206
   ],
   "tweeted_game_pks": [
-    822286,
+    822283,
     820590,
+    822286,
     820592,
     820591,
     822354
