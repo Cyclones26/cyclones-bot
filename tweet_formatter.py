@@ -192,6 +192,16 @@ _PLAYER_MILESTONE_TEMPLATES = {
         "{player} is no longer with an affiliated MLB/MiLB club. Wherever the "
         "road leads next — thanks for the memories in the system. \U0001F499\n\n{hashtags}"
     ),
+    pm_mod.MILESTONE_REHAB_ASSIGNMENT: (
+        "\U0001FA79 REHAB ASSIGNMENT\n\n"
+        "{player} has started a rehab assignment with the {new_team} — "
+        "first step on the road back. \U0001F4AA\n\n{hashtags}"
+    ),
+    pm_mod.MILESTONE_REHAB_RETURN: (
+        "✅ ROAD BACK COMPLETE\n\n"
+        "{player} has wrapped up his rehab assignment and rejoined the "
+        "{new_team}. Welcome back. \U0001F309\n\n{hashtags}"
+    ),
     pm_mod.MILESTONE_ACTIVATED_FROM_IL: (
         "✅ BACK IN ACTION\n\n"
         "{player} is off the injured list and back on the field for the "
@@ -261,6 +271,7 @@ def format_player_progress_tweet(
     level_name: str,
     is_pitcher: bool,
     stat: Dict[str, Any],
+    season_stat: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Periodic "how's he doing now" update for a tracked player who has
@@ -284,7 +295,95 @@ def format_player_progress_tweet(
             f"{stat.get('homeRuns', 0)} HR, {stat.get('rbi', 0)} RBI"
         )
 
+    if season_stat:
+        if is_pitcher:
+            s_era = season_stat.get("era", 0) or 0
+            lines.append(
+                f"{config.SEASON} season: {season_stat.get('inningsPitched', '0.0')} IP, "
+                f"{season_stat.get('strikeOuts', 0)} K, {float(s_era):.2f} ERA"
+            )
+        else:
+            s_avg = season_stat.get("avg", 0) or 0
+            lines.append(
+                f"{config.SEASON} season: .{int(round(float(s_avg) * 1000)):03d}, "
+                f"{season_stat.get('homeRuns', 0)} HR, {season_stat.get('rbi', 0)} RBI"
+            )
+
     lines.append("")
     lines.append("Once a Cyclone, always a Cyclone \U0001F309")
     lines.append(config.TEAM_HASHTAGS)
     return _truncate("\n".join(lines))
+
+
+def format_player_feat_tweet(
+    player_name: str,
+    team_name: str,
+    level_name: str,
+    game_date: str,
+    feat_desc: str,
+) -> str:
+    """One standout single-game performance by a tracked player."""
+    where = f"{team_name}, {level_name}" if level_name else team_name
+    text = (
+        "\U0001F6A8 BIG GAME ALERT \U0001F6A8\n\n"
+        f"{player_name} ({where}): {feat_desc} on {game_date}. "
+        "The development is real. \U0001F4C8\n\n"
+        f"{config.TEAM_HASHTAGS}"
+    )
+    return _truncate(text)
+
+
+def format_season_recap_tweets(players: Dict[str, Any], season: int) -> List[str]:
+    """
+    Season-end development wrap, built entirely from the watchlist
+    snapshots (initial* fields are stamped the first time a player is
+    checked). Returns 1-2 tweets: the summary, plus a "biggest climbers"
+    list when anyone moved up.
+    """
+    total = len(players)
+    climbers = []
+    debuts = 0
+    traded = 0
+    left_ball = 0
+
+    for snap in players.values():
+        init_rank = snap.get("initialLevelRank")
+        cur_rank = snap.get("levelRank")
+        if init_rank is not None and cur_rank is not None and cur_rank > init_rank:
+            climbers.append((cur_rank - init_rank, snap))
+        if snap.get("mlbDebutSeen") and not snap.get("initialMlbDebutSeen", False):
+            debuts += 1
+        if not snap.get("currentTeamId"):
+            left_ball += 1
+        elif snap.get("parentOrgName") and snap.get("parentOrgName") != config.PARENT_ORG_NAME:
+            traded += 1
+
+    lines = [
+        f"\U0001F300 {season} DEVELOPMENT WRAP \U0001F300",
+        "",
+        f"We followed {total} Cyclones this season:",
+        f"\U0001F4C8 {len(climbers)} climbed at least one level",
+    ]
+    if debuts:
+        lines.append(f"\U0001F386 {debuts} made their MLB debut")
+    if traded:
+        lines.append(f"\U0001F501 {traded} now developing in other organizations")
+    if left_ball:
+        lines.append(f"\U0001F4C4 {left_ball} moved on from affiliated ball")
+    lines.append("")
+    lines.append("Once a Cyclone, always a Cyclone \U0001F309")
+    lines.append(config.TEAM_HASHTAGS)
+    tweets = [_truncate("\n".join(lines))]
+
+    if climbers:
+        climbers.sort(key=lambda item: -item[0])
+        lines2 = [f"\U0001F300 {season} BIGGEST CLIMBERS \U0001F300", ""]
+        for _, snap in climbers[:5]:
+            start = snap.get("initialTeamName") or "Brooklyn Cyclones"
+            end = snap.get("currentTeamName") or "?"
+            lines2.append(f"{snap.get('name', 'Unknown')}: {start} ➡️ {end}")
+        lines2.append("")
+        lines2.append(config.TEAM_HASHTAGS)
+        tweets.append(_truncate("\n".join(lines2)))
+
+    return tweets

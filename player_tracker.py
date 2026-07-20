@@ -189,6 +189,20 @@ def seed_watchlist(players: Dict[str, Any]) -> int:
         }
         added += 1
         logger.info("Added new player to watchlist: %s (id=%s)", person.get("fullName"), person_id)
+
+    # Manually-requested alumni (config.EXTRA_TRACK_IDS): seeded exactly
+    # like a rosteree; the first refresh fills in name/team/level.
+    for person_id in config.EXTRA_TRACK_IDS:
+        key = str(person_id)
+        if key in players:
+            continue
+        players[key] = {
+            "name": f"Player {person_id}",
+            "_initialized": False,
+            "addedDate": today,
+        }
+        added += 1
+        logger.info("Added manually-tracked player id=%s to watchlist.", person_id)
     return added
 
 
@@ -228,7 +242,7 @@ def refresh_player(person_id: int, old_snapshot: Dict[str, Any]) -> Optional[Dic
     if current_team_id:
         status_str = _get_player_status(current_team_id, person_id)
 
-    return {
+    snapshot = {
         "name": person_data.get("fullName") or old_snapshot.get("name", "Unknown"),
         "currentTeamId": current_team_id,
         "currentTeamName": current_team_name,
@@ -241,7 +255,33 @@ def refresh_player(person_id: int, old_snapshot: Dict[str, Any]) -> Optional[Dic
         "addedDate": old_snapshot.get("addedDate", dt.date.today().isoformat()),
         "lastCheckedAt": dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
         "_initialized": True,
+        # Carried-over tracker state (rehab flag, feat dedupe, HR counter).
+        "onRehab": old_snapshot.get("onRehab", False),
+        "seasonHRTotal": old_snapshot.get("seasonHRTotal", 0),
+        "lastFeatDate": old_snapshot.get("lastFeatDate"),
     }
+
+    # Stamp the starting point the first time we ever see this player --
+    # the season-end recap diffs current level against these.
+    if old_snapshot.get("_initialized"):
+        for key in ("initialTeamName", "initialLevelRank", "initialMlbDebutSeen"):
+            if key in old_snapshot:
+                snapshot[key] = old_snapshot[key]
+    if "initialLevelRank" not in snapshot:
+        if old_snapshot.get("_initialized"):
+            # Pre-update snapshot with no initial* fields: this player was
+            # seeded from the Brooklyn roster before the recap feature
+            # existed, so his starting point is the Cyclones -- not
+            # wherever he happens to be now.
+            snapshot["initialTeamName"] = config.TEAM_NAME
+            snapshot["initialLevelRank"] = config.SPORT_ID_LEVEL_RANK.get(13, 2)
+            snapshot["initialMlbDebutSeen"] = False
+        else:
+            snapshot["initialTeamName"] = current_team_name
+            snapshot["initialLevelRank"] = level_rank
+            snapshot["initialMlbDebutSeen"] = snapshot["mlbDebutSeen"]
+
+    return snapshot
 
 
 def process_milestones(players: Dict[str, Any]) -> int:
@@ -260,6 +300,21 @@ def process_milestones(players: Dict[str, Any]) -> int:
             continue
 
         logger.info("Milestone for %s: %s", player_name, milestone["category"])
+
+        # Keep the rehab flag coherent: set it when a rehab assignment
+        # starts, clear it when the player returns or moves on for real.
+        if milestone["category"] == pm_mod.MILESTONE_REHAB_ASSIGNMENT:
+            new_snapshot["onRehab"] = True
+        elif milestone["category"] in (
+            pm_mod.MILESTONE_REHAB_RETURN,
+            pm_mod.MILESTONE_TRADED_ORG,
+            pm_mod.MILESTONE_PROMOTED,
+            pm_mod.MILESTONE_DEMOTED,
+            pm_mod.MILESTONE_LATERAL_MOVE,
+            pm_mod.MILESTONE_LEFT_AFFILIATED_BALL,
+        ):
+            new_snapshot["onRehab"] = False
+
         if milestone["category"] == pm_mod.MILESTONE_MLB_DEBUT:
             tweet_text = tweet_formatter.format_player_debut_tweet(player_name, milestone.get("team_name"))
         elif milestone["category"] == pm_mod.MILESTONE_PLACED_ON_IL:
@@ -334,9 +389,18 @@ def process_progress_updates(players: Dict[str, Any], tracker_state: Dict[str, A
             if at_bats < config.WEEKLY_MIN_AT_BATS:
                 continue
 
+        season_stat = None
+        try:
+            season_stat = mlb_api.get_player_season_stats(
+                int(person_id_str), group, config.SEASON, sport_id
+            )
+        except Exception as exc:
+            logger.warning("No season stats for %s (%s)", snapshot.get("name"), exc)
+
         level_name = config.SPORT_ID_LEVEL_NAME.get(sport_id, "")
         tweet_text = tweet_formatter.format_player_progress_tweet(
-            snapshot["name"], snapshot.get("currentTeamName", "their club"), level_name, is_pitcher, stat
+            snapshot["name"], snapshot.get("currentTeamName", "their club"), level_name,
+            is_pitcher, stat, season_stat=season_stat,
         )
 
         try:
@@ -357,6 +421,103 @@ def process_progress_updates(players: Dict[str, Any], tracker_state: Dict[str, A
     return posted
 
 
+def process_feats(players: Dict[str, Any]) -> int:
+    """
+    Scans each tracked player's game log for standout single games
+    (thresholds live in player_milestones.detect_game_feats) since the
+    last check, plus "first HR of the season". Capped at
+    config.FEAT_MAX_TWEETS_PER_RUN so a backlog can't flood the timeline.
+    """
+    posted = 0
+    for person_id_str, snap in players.items():
+        if posted >= config.FEAT_MAX_TWEETS_PER_RUN:
+            break
+        sport_id = snap.get("sportId")
+        if not snap.get("currentTeamId") or not sport_id:
+            continue
+
+        is_pitcher = snap.get("primaryPosition") == "P"
+        group = "pitching" if is_pitcher else "hitting"
+        since = snap.get("lastFeatDate") or snap.get("addedDate") or dt.date.today().isoformat()
+
+        time.sleep(POLITE_DELAY_SECONDS)
+        try:
+            splits = mlb_api.get_player_gamelog(int(person_id_str), group, config.SEASON, sport_id)
+        except Exception as exc:
+            logger.warning("Skipping feat check for %s (%s)", snap.get("name"), exc)
+            continue
+
+        feats = pm_mod.detect_game_feats(splits, is_pitcher, since)
+
+        if not is_pitcher:
+            hr_total = pm_mod.season_hr_total(splits)
+            if snap.get("seasonHRTotal", 0) == 0 and hr_total > 0:
+                hr_date = pm_mod.first_hr_date(splits)
+                if hr_date and hr_date > since:
+                    feats.insert(0, {"date": hr_date, "desc": "his first home run of the season"})
+            snap["seasonHRTotal"] = hr_total
+
+        snap["lastFeatDate"] = dt.date.today().isoformat()
+
+        level_name = config.SPORT_ID_LEVEL_NAME.get(sport_id, "")
+        for feat in feats:
+            if posted >= config.FEAT_MAX_TWEETS_PER_RUN:
+                break
+            tweet_text = tweet_formatter.format_player_feat_tweet(
+                snap["name"], snap.get("currentTeamName") or "his club",
+                level_name, feat["date"], feat["desc"],
+            )
+            try:
+                twitter_client.post_tweet(tweet_text)
+                sheet_logger.log_tweet(
+                    script="player_tracker",
+                    category="BIG GAME",
+                    subject=snap.get("name", "Unknown"),
+                    tweet_text=tweet_text,
+                )
+            except twitter_client.TweetPostError as exc:
+                logger.error("Failed to post feat for %s: %s", snap.get("name"), exc)
+                continue
+            posted += 1
+
+    return posted
+
+
+def process_season_recap(players: Dict[str, Any], tracker_state: Dict[str, Any]) -> int:
+    """
+    Once per season, on the first run on/after config.SEASON_RECAP_START
+    (MM-DD), posts a development wrap built from the watchlist snapshots.
+    """
+    today = dt.date.today()
+    try:
+        month, day = (int(x) for x in config.SEASON_RECAP_START.split("-"))
+        recap_start = dt.date(today.year, month, day)
+    except ValueError:
+        logger.warning("Bad SEASON_RECAP_START %r; skipping recap.", config.SEASON_RECAP_START)
+        return 0
+
+    if today < recap_start or tracker_state.get("last_season_recap") == config.SEASON:
+        return 0
+
+    posted = 0
+    for tweet_text in tweet_formatter.format_season_recap_tweets(players, config.SEASON):
+        try:
+            twitter_client.post_tweet(tweet_text)
+            sheet_logger.log_tweet(
+                script="player_tracker",
+                category="SEASON RECAP",
+                subject=str(config.SEASON),
+                tweet_text=tweet_text,
+            )
+        except twitter_client.TweetPostError as exc:
+            logger.error("Failed to post season recap: %s", exc)
+            return posted  # retry next run; state flag not set
+        posted += 1
+
+    tracker_state["last_season_recap"] = config.SEASON
+    return posted
+
+
 def run() -> int:
     tracker_state = player_tracker_state.load_tracker_state()
     players = tracker_state["players"]
@@ -369,7 +530,9 @@ def run() -> int:
     )
 
     milestones_posted = process_milestones(players)
+    feats_posted = process_feats(players)
     progress_posted = process_progress_updates(players, tracker_state)
+    recap_posted = process_season_recap(players, tracker_state)
 
     tracker_state["players"] = players
     player_tracker_state.save_tracker_state(tracker_state)
@@ -377,8 +540,8 @@ def run() -> int:
     sheet_logger.sync_tracked_players(players)
 
     logger.info(
-        "Done. %d milestone tweet(s), %d progress tweet(s), watching %d player(s).",
-        milestones_posted, progress_posted, len(players),
+        "Done. %d milestone, %d big-game, %d progress, %d recap tweet(s); watching %d player(s).",
+        milestones_posted, feats_posted, progress_posted, recap_posted, len(players),
     )
     return 0
 

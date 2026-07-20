@@ -9,10 +9,12 @@ MLB Stats API team ID `509`), focused entirely on **player development**:
    up over the last 7 days.
 3. **Player Tracker** — long-term, individual development tracking. Seeds
    itself from the 2026 Cyclones roster and then follows each of those
-   players *indefinitely*: promotions, demotions, trades, MLB debuts, even
-   a best-effort attempt to keep following someone after they leave the
-   Mets organization entirely — plus a weekly "how's he doing now" stat
-   line once a player has graduated off the Brooklyn roster. See §1.5.
+   players *indefinitely*: promotions, demotions, trades, MLB debuts,
+   rehab assignments, "big game" performances, even a best-effort attempt
+   to keep following someone after they leave the Mets organization
+   entirely — plus a weekly "how's he doing now" stat line (7-day +
+   season-to-date) once a player has graduated off the Brooklyn roster,
+   and a season-end development wrap. See §1.5 and §1.7.
 
 > **July 2026 format change:** the bot no longer tweets game results. The
 > old Daily Post-Game Recap (`daily_recap.py` / `boxscore.py` /
@@ -145,6 +147,40 @@ on the 7-day injured list" with no cause. There is no MLB Stats API
 endpoint that exposes MiLB injury specifics beyond this description
 field. When the detail isn't there, the tweet degrades to a plain IL
 notice rather than guessing.
+
+---
+
+## 1.7 Development extras (July 2026 update #2)
+
+**Season-to-date lines.** Weekly progress tweets for graduates now show
+both the trailing 7 days and the player's season line at his current
+level (`stats=season`), so followers see the arc, not just the week.
+
+**Big-game alerts.** Each run scans every tracked player's game log
+(`stats=gameLog`) for standout single games since the last check:
+2+ HR games, 4+ hit games, 10+ K starts, and a hitter's first HR of the
+season. Capped at `FEAT_MAX_TWEETS_PER_RUN` (default 5) per run so a
+backlog can't flood the timeline, and deduped per-player via a
+`lastFeatDate` stamp in `tracked_players.json`.
+
+**Rehab tracking.** A tracked player who was on the IL and then pops up
+on the org's complex-league club (sportId 16) is classified as a
+**rehab assignment** — not the "demotion" the raw level-diff would
+suggest — and his return to a higher level posts a **road back
+complete** tweet instead of a fake "promotion". The `onRehab` flag
+persists in the snapshot between runs.
+
+**Manual alumni tracking.** Set the `EXTRA_TRACK_IDS` env var (or
+GitHub Actions secret/variable) to a comma-separated list of MLB
+personIds to follow past Cyclones who graduated before the bot existed.
+They're seeded like rosterees on the next run. `DO_NOT_TRACK_IDS` wins
+if an id appears in both.
+
+**Season-end wrap.** On the first run on/after `SEASON_RECAP_START`
+(default `09-20`), the tracker posts a one-time recap: how many tracked
+players climbed a level, debuted in MLB, were traded, or moved on —
+plus a "biggest climbers" list. Starting points are stamped per player
+(`initialTeamName`/`initialLevelRank`) the first time they're checked.
 
 ---
 

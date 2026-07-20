@@ -141,3 +141,32 @@ if _extra_do_not_track:
         _pid = _pid.strip()
         if _pid.isdigit():
             DO_NOT_TRACK_IDS.add(int(_pid))
+
+# --------------------------------------------------------------------------
+# Development extras (July 2026 update #2)
+# --------------------------------------------------------------------------
+# Parent organization display name, used for "still in the Mets system?"
+# checks in the season recap.
+PARENT_ORG_NAME = os.environ.get("PARENT_ORG_NAME", "New York Mets")
+
+# Manually-added players to track, by MLB personId (comma-separated env
+# var). Use this for Cyclones alumni who graduated before the bot existed
+# (e.g. Jett Williams types) -- they get seeded into the watchlist exactly
+# like a current rosteree. DO_NOT_TRACK_IDS wins if an id is in both.
+EXTRA_TRACK_IDS = set()
+_extra_track = os.environ.get("EXTRA_TRACK_IDS", "").strip()
+if _extra_track:
+    for _pid in _extra_track.split(","):
+        _pid = _pid.strip()
+        if _pid.isdigit():
+            EXTRA_TRACK_IDS.add(int(_pid))
+EXTRA_TRACK_IDS -= DO_NOT_TRACK_IDS
+
+# Cap on "big game" feat tweets per run so a first run (or a monster week
+# across the system) can't flood the timeline.
+FEAT_MAX_TWEETS_PER_RUN = int(os.environ.get("FEAT_MAX_TWEETS_PER_RUN", "5"))
+
+# The season-end development wrap posts on the first player_tracker run on
+# or after this MM-DD each year (once per season; High-A regular seasons
+# end in early-mid September).
+SEASON_RECAP_START = os.environ.get("SEASON_RECAP_START", "09-20")

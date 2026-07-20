@@ -232,4 +232,95 @@ progress_tweet = tweet_formatter.format_player_progress_tweet(
 print(progress_tweet)
 assert len(progress_tweet) <= 280
 
+print("=== Rehab assignment / return classification ===")
+
+il_snapshot = dict(base_snapshot, lastStatus="IL")
+rehab = dict(base_snapshot, currentTeamId=468, currentTeamName="FCL Mets",
+             sportId=16, levelRank=0, lastStatus="ACTIVE")
+milestone = pm_mod.classify_player_change(il_snapshot, rehab)
+assert milestone["category"] == pm_mod.MILESTONE_REHAB_ASSIGNMENT, milestone
+print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+print()
+
+# Return from rehab must NOT read as a promotion.
+on_rehab = dict(rehab, onRehab=True)
+returned = dict(base_snapshot, lastStatus="ACTIVE")
+milestone = pm_mod.classify_player_change(on_rehab, returned)
+assert milestone["category"] == pm_mod.MILESTONE_REHAB_RETURN, milestone
+print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+print()
+
+# A normal demotion (not from IL) must still classify as a demotion.
+to_complex = dict(base_snapshot, currentTeamId=468, currentTeamName="FCL Mets",
+                  sportId=16, levelRank=0)
+milestone = pm_mod.classify_player_change(base_snapshot, to_complex)
+assert milestone["category"] == pm_mod.MILESTONE_DEMOTED, milestone
+
+print("=== Big-game feat detection ===")
+
+GAMELOG = [
+    {"date": "2026-07-10", "stat": {"homeRuns": 0, "hits": 1, "rbi": 0}},
+    {"date": "2026-07-14", "stat": {"homeRuns": 2, "hits": 3, "rbi": 5}},
+    {"date": "2026-07-16", "stat": {"homeRuns": 0, "hits": 4, "rbi": 1}},
+]
+feats = pm_mod.detect_game_feats(GAMELOG, is_pitcher=False, since_date="2026-07-12")
+assert len(feats) == 2, feats
+assert "2 home runs" in feats[0]["desc"] and "5 RBI" in feats[0]["desc"], feats
+assert "4-hit game" in feats[1]["desc"], feats
+# The 07-10 game is before since_date and must be excluded.
+assert all(f["date"] > "2026-07-12" for f in feats)
+print(tweet_formatter.format_player_feat_tweet(
+    "Mitch Voit", "Brooklyn Cyclones", "High-A", feats[0]["date"], feats[0]["desc"]))
+print()
+
+PITCHER_LOG = [
+    {"date": "2026-07-15", "stat": {"strikeOuts": 11, "inningsPitched": "6.0"}},
+    {"date": "2026-07-09", "stat": {"strikeOuts": 12, "inningsPitched": "7.0"}},
+]
+pfeats = pm_mod.detect_game_feats(PITCHER_LOG, is_pitcher=True, since_date="2026-07-12")
+assert len(pfeats) == 1 and "11 strikeouts" in pfeats[0]["desc"], pfeats
+
+assert pm_mod.season_hr_total(GAMELOG) == 2
+assert pm_mod.first_hr_date(GAMELOG) == "2026-07-14"
+
+print("=== Progress tweet with season-to-date line ===")
+season_stat = {"avg": 0.291, "homeRuns": 11, "rbi": 44}
+progress_tweet = tweet_formatter.format_player_progress_tweet(
+    "Mitch Voit", "Binghamton Rumble Ponies", "AA", False, hitter_stat, season_stat=season_stat
+)
+assert "season: .291, 11 HR, 44 RBI" in progress_tweet, progress_tweet
+assert len(progress_tweet) <= 280
+print(progress_tweet)
+print()
+
+print("=== Season recap tweets ===")
+recap_players = {
+    "1": {"name": "Mitch Voit", "initialTeamName": "Brooklyn Cyclones", "initialLevelRank": 2,
+          "currentTeamName": "Binghamton Rumble Ponies", "levelRank": 3, "currentTeamId": 505,
+          "parentOrgName": "New York Mets", "mlbDebutSeen": False, "initialMlbDebutSeen": False},
+    "2": {"name": "Ace Pitcher", "initialTeamName": "Brooklyn Cyclones", "initialLevelRank": 2,
+          "currentTeamName": "New York Mets", "levelRank": 5, "currentTeamId": 121,
+          "parentOrgName": "New York Mets", "mlbDebutSeen": True, "initialMlbDebutSeen": False},
+    "3": {"name": "Steady Guy", "initialTeamName": "Brooklyn Cyclones", "initialLevelRank": 2,
+          "currentTeamName": "Brooklyn Cyclones", "levelRank": 2, "currentTeamId": 453,
+          "parentOrgName": "New York Mets", "mlbDebutSeen": False, "initialMlbDebutSeen": False},
+    "4": {"name": "Traded Guy", "initialTeamName": "Brooklyn Cyclones", "initialLevelRank": 2,
+          "currentTeamName": "Indianapolis Indians", "levelRank": 4, "currentTeamId": 484,
+          "parentOrgName": "Pittsburgh Pirates", "mlbDebutSeen": False, "initialMlbDebutSeen": False},
+}
+recap_tweets = tweet_formatter.format_season_recap_tweets(recap_players, 2026)
+assert len(recap_tweets) == 2, recap_tweets
+assert "We followed 4 Cyclones" in recap_tweets[0], recap_tweets[0]
+assert "3 climbed at least one level" in recap_tweets[0], recap_tweets[0]
+assert "1 made their MLB debut" in recap_tweets[0], recap_tweets[0]
+assert "Ace Pitcher" in recap_tweets[1], recap_tweets[1]
+for t in recap_tweets:
+    assert len(t) <= 280
+    print(t)
+    print()
+
+print("=== Extra-track IDs config ===")
+assert isinstance(config.EXTRA_TRACK_IDS, set)
+assert config.EXTRA_TRACK_IDS.isdisjoint(config.DO_NOT_TRACK_IDS)
+
 print("\nALL OFFLINE CHECKS PASSED")

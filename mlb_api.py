@@ -26,18 +26,8 @@ Endpoint reference (all relative to MLB_API_BASE = statsapi.mlb.com/api/v1):
 
   GET /transactions?teamId={teamId}&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
       -> promotions, demotions, IL moves, releases, signings for the team
-         in the given date range. This is the core feed for Roster Alerts.
-
-  GET /schedule?teamId={teamId}&sportId={sportId}&date=YYYY-MM-DD&hydrate=team,linescore,decisions
-      -> games for a given team/date. Use this to discover last night's
-         gamePk(s) before pulling the boxscore.
-
-  GET /game/{gamePk}/boxscore
-      -> full box score (every batter/pitcher stat line) for one game.
-         This is the core feed for the Daily Post-Game Stat Line.
-
-  GET /game/{gamePk}/linescore
-      -> inning-by-inning score, useful for a "Final: 5-3 W" summary line.
+         in the given date range. This is the core feed for Roster Alerts,
+         and its free-text description is where IL injury details live.
 
   GET /people/{personId}/stats?stats=byDateRange&group=hitting&startDate=&endDate=&season=&sportId=
       -> aggregated hitting/pitching totals for one player over an
@@ -47,8 +37,14 @@ Endpoint reference (all relative to MLB_API_BASE = statsapi.mlb.com/api/v1):
          without notice), get_player_gamelog() below is the fallback path:
          pull the full game log and sum the games that fall in range.
 
+  GET /people/{personId}/stats?stats=season&group=hitting&season=&sportId=
+      -> season-to-date totals for one player at one level. Used to add
+         the "2026 season:" line to Player Tracker progress tweets.
+
   GET /people/{personId}/stats?stats=gameLog&group=hitting&season=&sportId=
-      -> every individual game log entry for a player this season.
+      -> every individual game log entry for a player this season. Used
+         by the Player Tracker's "big game" feat detection (multi-HR
+         games, 4-hit games, 10-K starts).
 
   GET /people/{personId}?hydrate=currentTeam,team
       -> player bio + whatever team currently employs them (currentTeam),
@@ -153,7 +149,7 @@ def get_person(person_id: int) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Transactions (Roster Alerts)
+# Transactions (Roster Alerts + IL injury details)
 # --------------------------------------------------------------------------
 
 def get_transactions(team_id: int, start_date: str, end_date: str) -> List[Dict[str, Any]]:
@@ -165,35 +161,7 @@ def get_transactions(team_id: int, start_date: str, end_date: str) -> List[Dict[
 
 
 # --------------------------------------------------------------------------
-# Schedule & box scores (Daily Stat Lines)
-# --------------------------------------------------------------------------
-
-def get_schedule_for_date(team_id: int, sport_id: int, date_str: str) -> List[Dict[str, Any]]:
-    data = _get(
-        "/schedule",
-        params={
-            "teamId": team_id,
-            "sportId": sport_id,
-            "date": date_str,
-            "hydrate": "team,linescore,decisions",
-        },
-    )
-    games: List[Dict[str, Any]] = []
-    for date_block in data.get("dates", []):
-        games.extend(date_block.get("games", []))
-    return games
-
-
-def get_boxscore(game_pk: int) -> Dict[str, Any]:
-    return _get(f"/game/{game_pk}/boxscore")
-
-
-def get_linescore(game_pk: int) -> Dict[str, Any]:
-    return _get(f"/game/{game_pk}/linescore")
-
-
-# --------------------------------------------------------------------------
-# Player stats (Weekly Summaries)
+# Player stats (Weekly Summaries / Player Tracker)
 # --------------------------------------------------------------------------
 
 def get_player_stats_by_date_range(
@@ -219,10 +187,26 @@ def get_player_stats_by_date_range(
     return splits[0].get("stat", {}) if splits else {}
 
 
+def get_player_season_stats(person_id: int, group: str, season: int, sport_id: int) -> Dict[str, Any]:
+    """
+    Season-to-date totals for a player at his current level. Used for the
+    "2026 season:" line in progress tweets. Note this is per-level -- a
+    player promoted mid-season shows only his numbers at the current level,
+    which is usually what you want in a development tweet anyway.
+    """
+    data = _get(
+        f"/people/{person_id}/stats",
+        params={"stats": "season", "group": group, "season": season, "sportId": sport_id},
+    )
+    splits = (data.get("stats") or [{}])[0].get("splits") or []
+    return splits[0].get("stat", {}) if splits else {}
+
+
 def get_player_gamelog(person_id: int, group: str, season: int, sport_id: int) -> List[Dict[str, Any]]:
     """
-    Fallback path: full game-by-game log. Use this if byDateRange ever
-    stops returning data (filter `splits[].date` to your window yourself).
+    Full game-by-game log for one season/level. Used as the byDateRange
+    fallback AND as the primary feed for "big game" feat detection
+    (see player_milestones.detect_game_feats).
     """
     data = _get(
         f"/people/{person_id}/stats",
