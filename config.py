@@ -96,6 +96,10 @@ STATE_FILE = os.environ.get("STATE_FILE", "state.json")
 # Wider than 1 day on purpose so a missed/failed run still catches up.
 TRANSACTION_LOOKBACK_DAYS = int(os.environ.get("TRANSACTION_LOOKBACK_DAYS", "3"))
 
+# How many days back to scan when trying to attach injury details (from the
+# transaction description) to an IL milestone tweet in player_tracker.py.
+IL_DETAIL_LOOKBACK_DAYS = int(os.environ.get("IL_DETAIL_LOOKBACK_DAYS", "14"))
+
 # Minimum at-bats / innings pitched for someone to be eligible as the
 # weekly "hot streak" hitter/pitcher (avoids crowning a 1-for-1 pinch hitter).
 WEEKLY_MIN_AT_BATS = int(os.environ.get("WEEKLY_MIN_AT_BATS", "10"))
@@ -112,6 +116,28 @@ TRACKER_STATE_FILE = os.environ.get("TRACKER_STATE_FILE", "tracked_players.json"
 # Which roster snapshot seeds the watchlist. "fullSeason" includes the
 # active roster + IL/restricted/etc., so anyone who suits up for the 2026
 # Cyclones gets tracked -- not just whoever happens to be active the moment
-# this runs. Once added, a player is never removed from the watchlist, even
-# after they leave the organization entirely.
+# this runs. Once added, a player is never removed from the watchlist
+# (unless listed in DO_NOT_TRACK_IDS below).
 TRACKER_SEED_ROSTER_TYPE = os.environ.get("TRACKER_SEED_ROSTER_TYPE", "fullSeason")
+
+# Players to NEVER track, by MLB personId. These are typically MLB veterans
+# who briefly appeared on the Cyclones roster for a rehab assignment --
+# technically "on the 2026 roster" per rosterType=fullSeason, but not
+# Brooklyn development prospects. Seeding skips them, and player_tracker.py
+# purges any existing watchlist entry for them at the start of every run
+# (so listing someone here is enough; no manual JSON editing needed).
+# Add more via the DO_NOT_TRACK_IDS env var (comma-separated personIds).
+DO_NOT_TRACK_IDS = {
+    621345,  # A.J. Minter      (MLB rehab stint)
+    476594,  # Robert Stock     (journeyman rehab stint)
+    640470,  # Adbert Alzolay   (MLB rehab stint)
+    643361,  # Kevin Herget     (journeyman depth arm)
+    666197,  # Grae Kessinger   (rehab/depth stint, since with Pirates org)
+    682175,  # Joe Jacques      (MLB rehab stint)
+}
+_extra_do_not_track = os.environ.get("DO_NOT_TRACK_IDS", "").strip()
+if _extra_do_not_track:
+    for _pid in _extra_do_not_track.split(","):
+        _pid = _pid.strip()
+        if _pid.isdigit():
+            DO_NOT_TRACK_IDS.add(int(_pid))

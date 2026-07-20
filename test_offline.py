@@ -13,9 +13,9 @@ import os
 
 os.environ.setdefault("DRY_RUN", "true")
 
+import config
 import transactions as tx_mod
 import tweet_formatter
-import boxscore
 import player_milestones as pm_mod
 
 TEAM_ID = 509
@@ -42,18 +42,9 @@ promotion_tx = {
 }
 classified = tx_mod.classify_transaction(promotion_tx, TEAM_ID, LADDER)
 assert classified["category"] == tx_mod.CATEGORY_PROMOTED_FROM_CYCLONES, classified
-print(tweet_formatter.format_transaction_tweet(classified))
-print()
-
-il_tx = {
-    "id": 1002,
-    "person": {"fullName": "Sebastian Walcott"},
-    "typeDesc": "Status Change",
-    "description": "Sebastian Walcott placed on the 7-day injured list retroactive to June 20, 2026.",
-}
-classified = tx_mod.classify_transaction(il_tx, TEAM_ID, LADDER)
-assert classified["category"] == tx_mod.CATEGORY_PLACED_ON_IL, classified
-print(tweet_formatter.format_transaction_tweet(classified))
+tweet = tweet_formatter.format_transaction_tweet(classified)
+assert "MOVING UP" in tweet and "Binghamton" in tweet, tweet
+print(tweet)
 print()
 
 call_up_tx = {
@@ -69,67 +60,69 @@ assert classified["category"] == tx_mod.CATEGORY_PROMOTED_TO_CYCLONES, classifie
 print(tweet_formatter.format_transaction_tweet(classified))
 print()
 
-print("=== Box score parsing ===")
+print("=== IL detail extraction (injury type / retro date, best-effort) ===")
 
-FAKE_BOXSCORE = {
-    "teams": {
-        "away": {"team": {"id": 999, "name": "Hudson Valley Renegades"}, "players": {}},
-        "home": {
-            "team": {"id": 509, "name": "Brooklyn Cyclones"},
-            "players": {
-                "ID1": {
-                    "person": {"id": 1, "fullName": "Jett Williams"},
-                    "position": {"abbreviation": "SS"},
-                    "stats": {
-                        "batting": {
-                            "atBats": 4, "hits": 3, "doubles": 1, "triples": 0,
-                            "homeRuns": 1, "rbi": 4, "runs": 2, "stolenBases": 1,
-                        }
-                    },
-                },
-                "ID2": {
-                    "person": {"id": 2, "fullName": "Backup Guy"},
-                    "position": {"abbreviation": "2B"},
-                    "stats": {"batting": {"atBats": 3, "hits": 1, "rbi": 0, "runs": 0}},
-                },
-                "ID3": {
-                    "person": {"id": 3, "fullName": "Ace Pitcher"},
-                    "position": {"abbreviation": "P"},
-                    "stats": {
-                        "pitching": {
-                            "inningsPitched": "6.0", "strikeOuts": 9,
-                            "earnedRuns": 1, "baseOnBalls": 2, "hits": 4,
-                        }
-                    },
-                },
-                "ID4": {
-                    "person": {"id": 4, "fullName": "Mop Up Guy"},
-                    "position": {"abbreviation": "P"},
-                    "stats": {
-                        "pitching": {
-                            "inningsPitched": "1.0", "strikeOuts": 0,
-                            "earnedRuns": 2, "baseOnBalls": 1, "hits": 2,
-                        }
-                    },
-                },
-            },
-        },
-    }
+# Style 1: injury as a trailing sentence.
+il_tx = {
+    "id": 1002,
+    "person": {"fullName": "Sebastian Walcott"},
+    "typeDesc": "Status Change",
+    "description": (
+        "Brooklyn Cyclones placed SS Sebastian Walcott on the 7-day injured "
+        "list retroactive to June 20, 2026. Right hamstring strain."
+    ),
 }
-
-hitter = boxscore.top_hitter(FAKE_BOXSCORE, TEAM_ID)
-pitcher = boxscore.top_pitcher(FAKE_BOXSCORE, TEAM_ID, win_pitcher_id=3)
-
-assert hitter["name"] == "Jett Williams", hitter
-assert pitcher["name"] == "Ace Pitcher", pitcher
-assert pitcher["decision"] == "W", pitcher
-
-recap_tweet = tweet_formatter.format_daily_recap_tweet(
-    "FINAL (W): Hudson Valley Renegades 3 @ Brooklyn Cyclones 8", hitter, pitcher
-)
-print(recap_tweet)
+classified = tx_mod.classify_transaction(il_tx, TEAM_ID, LADDER)
+assert classified["category"] == tx_mod.CATEGORY_PLACED_ON_IL, classified
+details = classified.get("il_details") or {}
+assert details.get("il_days") == "7", details
+assert details.get("retro_date") == "June 20, 2026", details
+assert details.get("injury") == "Right hamstring strain", details
+il_tweet = tweet_formatter.format_transaction_tweet(classified)
+assert "7-day IL" in il_tweet and "hamstring strain" in il_tweet.lower(), il_tweet
+assert len(il_tweet) <= 280
+print(il_tweet)
 print()
-assert len(recap_tweet) <= 280
+
+# Style 2: injury inline with "with a ...".
+il_tx2 = {
+    "id": 1004,
+    "person": {"fullName": "Tanner Witt"},
+    "typeDesc": "Status Change",
+    "description": (
+        "Brooklyn Cyclones placed RHP Tanner Witt on the 7-day injured list "
+        "with a right elbow sprain."
+    ),
+}
+classified = tx_mod.classify_transaction(il_tx2, TEAM_ID, LADDER)
+assert classified["category"] == tx_mod.CATEGORY_PLACED_ON_IL, classified
+assert (classified.get("il_details") or {}).get("injury") == "right elbow sprain", classified
+print(tweet_formatter.format_transaction_tweet(classified))
+print()
+
+# Style 3: no detail published at all -- tweet must degrade gracefully.
+il_tx3 = {
+    "id": 1005,
+    "person": {"fullName": "Felix Cepeda"},
+    "typeDesc": "Status Change",
+    "description": "Brooklyn Cyclones placed RHP Felix Cepeda on the injured list.",
+}
+classified = tx_mod.classify_transaction(il_tx3, TEAM_ID, LADDER)
+assert classified["category"] == tx_mod.CATEGORY_PLACED_ON_IL, classified
+bare_tweet = tweet_formatter.format_transaction_tweet(classified)
+assert "Felix Cepeda" in bare_tweet and len(bare_tweet) <= 280, bare_tweet
+print(bare_tweet)
+print()
+
+print("=== Do-not-track list ===")
+assert 621345 in config.DO_NOT_TRACK_IDS   # A.J. Minter
+assert 476594 in config.DO_NOT_TRACK_IDS   # Robert Stock
+assert 640470 in config.DO_NOT_TRACK_IDS   # Adbert Alzolay
+assert 643361 in config.DO_NOT_TRACK_IDS   # Kevin Herget
+assert 666197 in config.DO_NOT_TRACK_IDS   # Grae Kessinger
+assert 682175 in config.DO_NOT_TRACK_IDS   # Joe Jacques
+print(f"{len(config.DO_NOT_TRACK_IDS)} player(s) on the do-not-track list.")
+print()
 
 print("=== Weekly summary formatting ===")
 hot_hitters = [
@@ -197,12 +190,27 @@ assert milestone["category"] == pm_mod.MILESTONE_LEFT_AFFILIATED_BALL, milestone
 print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
 print()
 
-# Best-effort IL placement, then activation, on the same team.
+# Best-effort IL placement WITH an injury note from the transaction feed.
 on_il = dict(base_snapshot, lastStatus="IL")
 milestone = pm_mod.classify_player_change(base_snapshot, on_il)
 assert milestone["category"] == pm_mod.MILESTONE_PLACED_ON_IL, milestone
-print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+il_note = (
+    "Brooklyn Cyclones placed 1B Mitch Voit on the 7-day injured list "
+    "retroactive to July 15, 2026. Left wrist soreness."
+)
+il_milestone_tweet = tweet_formatter.format_player_milestone_tweet(
+    "Mitch Voit", milestone, injury_note=il_note
+)
+assert "7-day IL" in il_milestone_tweet and "wrist soreness" in il_milestone_tweet.lower(), il_milestone_tweet
+assert len(il_milestone_tweet) <= 280
+print(il_milestone_tweet)
+print()
 
+# ...and WITHOUT any note (MLB published nothing) -- must degrade gracefully.
+print(tweet_formatter.format_player_milestone_tweet("Mitch Voit", milestone))
+print()
+
+# Activation off the IL.
 activated = dict(on_il, lastStatus="ACTIVE")
 milestone = pm_mod.classify_player_change(on_il, activated)
 assert milestone["category"] == pm_mod.MILESTONE_ACTIVATED_FROM_IL, milestone

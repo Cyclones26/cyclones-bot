@@ -4,20 +4,23 @@ player_tracker.py
 --------------------
 Update #4: long-term, individual Player Tracker.
 
-Unlike the other three scripts (which are scoped to "what happened to the
-509 roster recently"), this one follows specific players indefinitely,
-even after they're promoted out of Brooklyn entirely -- e.g. you call this
-up once Mitch Voit is added to the watchlist, and it keeps tabs on him at
+Unlike the roster/weekly scripts (which are scoped to "what happened to
+the Cyclones roster recently"), this one follows specific players
+indefinitely, even after they're promoted out of Brooklyn entirely --
+e.g. once Mitch Voit is on the watchlist, it keeps tabs on him at
 Binghamton, then Syracuse, then the Mets, then (best-effort) wherever he
 ends up if he's ever traded or released, for as long as you keep running
 this script.
 
 Each run:
-  1. SEED: pulls the {config.TRACKER_SEED_ROSTER_TYPE} (default
-     "fullSeason") roster for TEAM_ID and adds any personId not already on
-     the watchlist. Once added, a player is never removed -- this is a
-     one-way ratchet, by design (you asked to track the 2026 roster
-     "forever").
+  0. PURGE: removes anyone in config.DO_NOT_TRACK_IDS from the watchlist
+     (MLB rehab vets who technically appeared on the Cyclones roster but
+     aren't development prospects -- e.g. A.J. Minter). Listing an id in
+     config.py is all it takes; no manual JSON edits needed.
+  1. SEED: pulls the config.TRACKER_SEED_ROSTER_TYPE (default
+     "fullSeason") roster for TEAM_ID and adds any personId not already
+     on the watchlist (and not in DO_NOT_TRACK_IDS). Once added, a
+     player is never removed -- a one-way ratchet, by design.
   2. REFRESH: for every watchlisted player, calls the org-agnostic
      mlb_api.get_person() to find their *current* team/level/org, and
      diffs that against the snapshot saved last run (player_milestones.py
@@ -28,15 +31,18 @@ Each run:
          best-effort, the API just stops returning a currentTeam)
        - MLB debut (special, extra-celebratory template)
        - placed on / activated from the IL (best-effort, via the current
-         team's roster status field, since the player endpoint itself
-         doesn't carry this)
-  3. PROGRESS: once a week (gated like weekly_summary.py, by date not by
-     cron, so a manual workflow_dispatch re-run the same week is a no-op),
-     tweets a short "how's he doing" stat line for every tracked player
-     who has *graduated off* the Cyclones roster and is still active
-     somewhere, IF they clear the same usage thresholds as
-     weekly_summary.py. Current Cyclones are deliberately skipped here --
-     weekly_summary.py already covers them, and this avoids double-posting.
+         team's roster status field). For IL placements we additionally
+         look up the player's recent transaction record and, when MLB's
+         description names the injury ("right shoulder strain",
+         "retroactive to July 10"), weave those details into the tweet.
+         MLB doesn't always publish injury specifics for minor leaguers,
+         so the tweet degrades to a plain IL notice when it doesn't.
+  3. PROGRESS: once a week (gated by date, not by cron), tweets a short
+     "how's he doing" stat line for every tracked player who has
+     *graduated off* the Cyclones roster and is still active somewhere,
+     IF they clear the same usage thresholds as weekly_summary.py.
+     Current Cyclones are deliberately skipped here -- weekly_summary.py
+     already covers them, and this avoids double-posting.
 
 Usage:
     python player_tracker.py
@@ -68,6 +74,7 @@ POLITE_DELAY_SECONDS = 0.2
 # metadata/roster-status once for every player who happens to share it.
 _team_info_cache: Dict[int, Dict[str, Any]] = {}
 _status_cache: Dict[int, Dict[int, str]] = {}
+_tx_cache: Dict[int, list] = {}
 
 
 def _get_team_info(team_id: int) -> Dict[str, Any]:
@@ -107,8 +114,56 @@ def _get_player_status(team_id: int, person_id: int) -> str:
     return _status_cache[team_id].get(person_id, "ACTIVE")
 
 
+def _lookup_il_transaction_note(person_id: int, team_id: Optional[int]) -> Optional[str]:
+    """
+    When a tracked player lands on the IL, try to find the matching
+    transaction record from his current team's recent feed -- its
+    description sometimes names the specific injury and the retroactive
+    date, which makes for a much more informative tweet. Returns the raw
+    description string, or None if nothing IL-ish is found (network
+    hiccups, or MLB just didn't publish details).
+    """
+    if not team_id:
+        return None
+    if team_id not in _tx_cache:
+        end = dt.date.today()
+        start = end - dt.timedelta(days=config.IL_DETAIL_LOOKBACK_DAYS)
+        try:
+            _tx_cache[team_id] = mlb_api.get_transactions(
+                team_id, start.isoformat(), end.isoformat()
+            )
+        except Exception as exc:
+            logger.warning("Could not fetch transactions for team %s: %s", team_id, exc)
+            _tx_cache[team_id] = []
+    for tx in _tx_cache[team_id]:
+        if (tx.get("person") or {}).get("id") != person_id:
+            continue
+        description = tx.get("description") or ""
+        if "injured list" in description.lower():
+            return description
+    return None
+
+
+def purge_do_not_track(players: Dict[str, Any]) -> int:
+    """Removes anyone on the config.DO_NOT_TRACK_IDS blocklist from the watchlist."""
+    removed = 0
+    for person_id_str in list(players.keys()):
+        try:
+            person_id = int(person_id_str)
+        except ValueError:
+            continue
+        if person_id in config.DO_NOT_TRACK_IDS:
+            entry = players.pop(person_id_str)
+            removed += 1
+            logger.info(
+                "Removed do-not-track player from watchlist: %s (id=%s)",
+                entry.get("name", "Unknown"), person_id,
+            )
+    return removed
+
+
 def seed_watchlist(players: Dict[str, Any]) -> int:
-    """Adds any never-before-seen Cyclone to the watchlist. Never removes anyone."""
+    """Adds any never-before-seen Cyclone to the watchlist (except DO_NOT_TRACK_IDS)."""
     try:
         roster = mlb_api.get_roster(config.TEAM_ID, roster_type=config.TRACKER_SEED_ROSTER_TYPE)
     except Exception as exc:
@@ -121,6 +176,8 @@ def seed_watchlist(players: Dict[str, Any]) -> int:
         person = entry.get("person") or {}
         person_id = person.get("id")
         if person_id is None:
+            continue
+        if person_id in config.DO_NOT_TRACK_IDS:
             continue
         key = str(person_id)
         if key in players:
@@ -205,6 +262,13 @@ def process_milestones(players: Dict[str, Any]) -> int:
         logger.info("Milestone for %s: %s", player_name, milestone["category"])
         if milestone["category"] == pm_mod.MILESTONE_MLB_DEBUT:
             tweet_text = tweet_formatter.format_player_debut_tweet(player_name, milestone.get("team_name"))
+        elif milestone["category"] == pm_mod.MILESTONE_PLACED_ON_IL:
+            injury_note = _lookup_il_transaction_note(
+                int(person_id_str), new_snapshot.get("currentTeamId")
+            )
+            tweet_text = tweet_formatter.format_player_milestone_tweet(
+                player_name, milestone, injury_note=injury_note
+            )
         else:
             tweet_text = tweet_formatter.format_player_milestone_tweet(player_name, milestone)
 
@@ -297,8 +361,12 @@ def run() -> int:
     tracker_state = player_tracker_state.load_tracker_state()
     players = tracker_state["players"]
 
+    removed = purge_do_not_track(players)
     added = seed_watchlist(players)
-    logger.info("Watchlist size: %d (added %d new this run).", len(players), added)
+    logger.info(
+        "Watchlist size: %d (added %d, purged %d do-not-track this run).",
+        len(players), added, removed,
+    )
 
     milestones_posted = process_milestones(players)
     progress_posted = process_progress_updates(players, tracker_state)

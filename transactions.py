@@ -10,10 +10,24 @@ keyword-based. We additionally cross-reference fromTeam/toTeam against
 the live affiliate ladder (see mlb_api.get_affiliate_ladder) to tell a
 true level-change "promotion" from a same-level trade or a depth-chart
 shuffle.
+
+This module also extracts *injury details* from IL transaction
+descriptions (extract_il_details). MLB's descriptions follow a loose
+pattern like:
+
+  "Brooklyn Cyclones placed RHP Wyatt Hudepohl on the 7-day injured
+   list retroactive to July 10, 2026. Right shoulder strain."
+
+or sometimes "... on the 7-day injured list with a right elbow sprain."
+The specific injury is included only when MLB publishes it (for minor
+leaguers it often isn't), so everything here is best-effort: whatever
+detail exists gets surfaced in the tweet, and the tweet degrades to a
+plain IL notice when it doesn't.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Optional
 
 CATEGORY_PROMOTED_FROM_CYCLONES = "PROMOTED_FROM_CYCLONES"   # left Brooklyn, went UP
@@ -25,6 +39,58 @@ CATEGORY_ACTIVATED_FROM_IL = "ACTIVATED_FROM_IL"
 CATEGORY_SIGNED = "SIGNED"
 CATEGORY_RELEASED = "RELEASED"
 CATEGORY_OTHER = "OTHER"
+
+# ---------------------------------------------------------------------------
+# IL detail extraction
+# ---------------------------------------------------------------------------
+
+_IL_DAYS_RE = re.compile(r"(\d+)[- ]day injured list", re.IGNORECASE)
+_RETRO_RE = re.compile(r"retroactive to ([A-Za-z]+ \d{1,2}(?:, \d{4})?)", re.IGNORECASE)
+_INJURY_WITH_RE = re.compile(
+    r"injured list[^.]*?\bwith\b\s+(?:a |an )?([^.;]+)", re.IGNORECASE
+)
+
+# Words that make a trailing sentence look like an injury description
+# rather than procedural boilerplate.
+_INJURY_KEYWORDS = (
+    "strain", "sprain", "surgery", "inflammation", "soreness", "fracture",
+    "tightness", "contusion", "tommy john", "impingement", "tendinitis",
+    "tendonitis", "discomfort", "injury", "concussion", "laceration",
+)
+
+
+def extract_il_details(description: Optional[str]) -> Dict[str, str]:
+    """
+    Best-effort parse of an IL transaction description. Returns any of:
+      {"il_days": "7", "retro_date": "July 10, 2026", "injury": "right shoulder strain"}
+    Keys are simply absent when the description doesn't carry that detail.
+    """
+    out: Dict[str, str] = {}
+    if not description:
+        return out
+
+    m = _IL_DAYS_RE.search(description)
+    if m:
+        out["il_days"] = m.group(1)
+
+    m = _RETRO_RE.search(description)
+    if m:
+        out["retro_date"] = m.group(1)
+
+    m = _INJURY_WITH_RE.search(description)
+    if m:
+        out["injury"] = m.group(1).strip().rstrip(",")
+    else:
+        # Injury sometimes arrives as its own trailing sentence:
+        # "... injured list retroactive to July 10, 2026. Right shoulder strain."
+        sentences = [s.strip() for s in description.split(".") if s.strip()]
+        for sentence in sentences[1:]:
+            lower = sentence.lower()
+            if len(sentence) <= 60 and any(k in lower for k in _INJURY_KEYWORDS):
+                out["injury"] = sentence
+                break
+
+    return out
 
 
 def _team_rank_lookup(ladder: Dict[int, Dict[str, Any]]) -> Dict[int, int]:
@@ -40,6 +106,7 @@ def classify_transaction(
       {"category": <one of the CATEGORY_* constants>,
        "player": str, "from_team": str|None, "to_team": str|None,
        "description": str}
+    IL placements additionally carry "il_details" (see extract_il_details).
     """
     person = tx.get("person") or {}
     from_team = tx.get("fromTeam") or {}
@@ -58,11 +125,12 @@ def classify_transaction(
 
     # --- Injured list moves take priority over the generic from/to logic ---
     if "injured list" in text:
-        if "activated" in text:
+        if "activated" in text or "reinstated" in text:
             result["category"] = CATEGORY_ACTIVATED_FROM_IL
             return result
         if "placed" in text or "transferred" in text:
             result["category"] = CATEGORY_PLACED_ON_IL
+            result["il_details"] = extract_il_details(description)
             return result
 
     if "released" in text or "outright" in text:
