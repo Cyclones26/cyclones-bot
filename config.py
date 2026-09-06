@@ -134,6 +134,10 @@ DO_NOT_TRACK_IDS = {
     643361,  # Kevin Herget     (journeyman depth arm)
     666197,  # Grae Kessinger   (rehab/depth stint, since with Pirates org)
     682175,  # Joe Jacques      (MLB rehab stint)
+  605280,  # Clay Holmes     (MLB rehab stint, briefly on roster during a Cubs rehab assignment)
+  681810,  # Austin Warren   (never seen at Brooklyn in tracker data -- brief cameo)
+  694266,  # DAndre Smith    (never seen at Brooklyn in tracker data -- brief cameo)
+  814492,  # Will Watson     (never seen at Brooklyn in tracker data -- brief cameo)
 }
 _extra_do_not_track = os.environ.get("DO_NOT_TRACK_IDS", "").strip()
 if _extra_do_not_track:
