@@ -170,3 +170,24 @@ FEAT_MAX_TWEETS_PER_RUN = int(os.environ.get("FEAT_MAX_TWEETS_PER_RUN", "5"))
 # or after this MM-DD each year (once per season; High-A regular seasons
 # end in early-mid September).
 SEASON_RECAP_START = os.environ.get("SEASON_RECAP_START", "09-20")
+
+# --------------------------------------------------------------------------
+# Player Spotlight (biweekly bio post -- see player_spotlight.py)
+# --------------------------------------------------------------------------
+# Persistent rotation/cadence state, same pattern as TRACKER_STATE_FILE.
+SPOTLIGHT_STATE_FILE = os.environ.get("SPOTLIGHT_STATE_FILE", "spotlight_state.json")
+
+# Name of the Google Sheet tab you hand-fill with High School / Draft /
+# Signed Date / Fun Fact per player (keyed by MLB Person ID -- the same ids
+# already visible in the auto-synced "Tracked Players" tab). This tab is
+# NEVER cleared or written to by the bot, only read -- safe to edit by hand
+# anytime. See bio_sheet.py.
+PLAYER_BIOS_SHEET_NAME = os.environ.get("PLAYER_BIOS_SHEET_NAME", "Player Bios")
+
+# The workflow's cron fires every Tuesday, but the spotlight itself should
+# only post every *other* Tuesday. Rather than compute odd/even week
+# parity (fragile around DST/year boundaries), the script just checks how
+# long it's been since the last spotlight post and skips if too soon.
+# 13 days (not 14) gives a little slack for a late/rerun workflow without
+# letting two posts land in the same week.
+SPOTLIGHT_MIN_DAYS_BETWEEN = int(os.environ.get("SPOTLIGHT_MIN_DAYS_BETWEEN", "13"))

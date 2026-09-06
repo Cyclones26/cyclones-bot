@@ -333,6 +333,45 @@ def format_player_feat_tweet(
     return _truncate(text)
 
 
+def format_player_spotlight_tweet(
+    player_name: str,
+    team_name: str,
+    level_name: str,
+    position: Optional[str],
+    birthday_str: Optional[str],
+    high_school: Optional[str],
+    draft_info: Optional[str],
+    signed_date: Optional[str],
+    fun_fact: Optional[str] = None,
+) -> str:
+    """
+    Biweekly "get to know a Cyclone" bio post (see player_spotlight.py).
+    Every bio field is optional except the name/team, since the sheet gets
+    filled in by hand and may be incomplete for a given player -- each
+    line is only included if there's actually something to say.
+    """
+    where = f"{team_name} ({level_name})" if level_name else team_name
+    header = f"{player_name} ({position})" if position else player_name
+
+    lines = ["\U0001F50E PLAYER SPOTLIGHT", "", f"{header} — {where}", ""]
+
+    if birthday_str:
+        lines.append(f"\U0001F382 Born {birthday_str}")
+    if high_school:
+        lines.append(f"\U0001F3EB {high_school}")
+    if draft_info:
+        lines.append(f"\U0001F4CB {draft_info}")
+    if signed_date:
+        lines.append(f"\u270D\uFE0F Signed {signed_date}")
+    if fun_fact:
+        lines.append("")
+        lines.append(fun_fact)
+
+    lines.append("")
+    lines.append(config.TEAM_HASHTAGS)
+    return _truncate("\n".join(lines))
+
+
 def format_season_recap_tweets(players: Dict[str, Any], season: int) -> List[str]:
     """
     Season-end development wrap, built entirely from the watchlist
