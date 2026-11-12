@@ -18,6 +18,8 @@ description never gets silently rejected by the X API.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 import config
@@ -27,10 +29,42 @@ import transactions as tx_mod
 TWEET_MAX_CHARS = 280
 
 
+def _tweet_length(text: str) -> int:
+    """Conservative X length: weighted Unicode and a floor for link tokens.
+
+    Emoji sequences may be overcounted, and long URLs retain their full
+    weight. This deliberately favors a shorter post over an API rejection.
+    """
+    total = 0
+    for token in re.findall(r"\s+|\S+", unicodedata.normalize("NFC", text)):
+        weight = sum(
+            1 if (ord(char) <= 0x10FF or 0x2000 <= ord(char) <= 0x200D
+                  or 0x2010 <= ord(char) <= 0x201F
+                  or 0x2032 <= ord(char) <= 0x2037) else 2
+            for char in token
+        )
+        # Include bare domains and short URLs: X's link length is 23.
+        if any(mark in token for mark in (".", "://", "\u3002", "\uff0e", "\uff61")):
+            weight = max(weight, 23)
+        total += weight
+    return total
+
+
 def _truncate(text: str, max_chars: int = TWEET_MAX_CHARS) -> str:
-    if len(text) <= max_chars:
+    text = unicodedata.normalize("NFC", text)
+    if max_chars <= 0:
+        return ""
+    if _tweet_length(text) <= max_chars:
         return text
-    return text[: max_chars - 1].rstrip() + "…"  # add an ellipsis
+    # Recheck the assembled prefix so a partially included short URL can
+    # never evade its 23-character floor.
+    prefix = ""
+    for char in text:
+        candidate = prefix + char
+        if _tweet_length(candidate.rstrip() + "…") > max_chars:
+            break
+        prefix = candidate
+    return prefix.rstrip() + "…"
 
 
 def _il_detail_line(il_details: Optional[Dict[str, str]]) -> str:
