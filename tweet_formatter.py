@@ -387,23 +387,49 @@ def format_player_spotlight_tweet(
     where = f"{team_name} ({level_name})" if level_name else team_name
     header = f"{player_name} ({position})" if position else player_name
 
-    lines = ["\U0001F50E PLAYER SPOTLIGHT", "", f"{header} — {where}", ""]
+    def clean(value: Optional[str]) -> str:
+        return " ".join((value or "").split())
 
-    if birthday_str:
-        lines.append(f"\U0001F382 Born {birthday_str}")
-    if high_school:
-        lines.append(f"\U0001F3EB {high_school}")
-    if draft_info:
-        lines.append(f"\U0001F4CB {draft_info}")
-    if signed_date:
-        lines.append(f"\u270D\uFE0F Signed {signed_date}")
-    if fun_fact:
-        lines.append("")
-        lines.append(fun_fact)
+    def short_date(value: Optional[str]) -> str:
+        result = clean(value)
+        for full, short in zip(
+            ("January", "February", "March", "April", "May", "June", "July",
+             "August", "September", "October", "November", "December"),
+            ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul",
+             "Aug", "Sep", "Oct", "Nov", "Dec"),
+        ):
+            result = re.sub(r"\b" + full + r"\b", short, result)
+        return result
 
-    lines.append("")
-    lines.append(config.TEAM_HASHTAGS)
-    return _truncate("\n".join(lines))
+    # Keep complete source fields. Optional details that do not fit are
+    # omitted rather than cutting a sentence, word, URL, or hashtag in half.
+    base = f"🔎 PLAYER SPOTLIGHT\n{clean(header)} — {clean(where)}"
+    if _tweet_length(base) > TWEET_MAX_CHARS:
+        raise ValueError("Spotlight name/team exceeds X's post limit")
+    details: Dict[str, str] = {}
+    candidates = [
+        ("draft", f"📋 {clean(draft_info)}" if clean(draft_info) else ""),
+        ("born", f"🎂 Born {short_date(birthday_str)}" if clean(birthday_str) else ""),
+        ("signed", f"✍️ Signed {short_date(signed_date)}" if clean(signed_date) else ""),
+        ("school", f"🏫 {clean(high_school)}" if clean(high_school)
+         and "unknown" not in clean(high_school).lower() else ""),
+        ("fact", clean(fun_fact)),
+        ("tags", clean(config.TEAM_HASHTAGS)),
+    ]
+
+    def render() -> str:
+        ordered = [details[key] for key in
+                   ("born", "school", "draft", "signed", "fact", "tags")
+                   if key in details]
+        return base + ("\n\n" + "\n".join(ordered) if ordered else "")
+
+    for key, line in candidates:
+        if not line:
+            continue
+        details[key] = line
+        if _tweet_length(render()) > TWEET_MAX_CHARS:
+            del details[key]
+    return render()
 
 
 def format_season_recap_tweets(players: Dict[str, Any], season: int) -> List[str]:
